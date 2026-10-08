@@ -197,7 +197,7 @@ test("logs tail the app's output, and are null once the instance is gone", async
 test("a create that never comes up leaves no orphan instance behind", async () => {
   const provider = make();
   // The instance is created, then poisoned before the provider can reach it.
-  fake.failNext(500, { match: ({ path }) => /\/exec$/.test(path) });
+  fake.failNext(500, { match: ({ path }) => path.endsWith("/exec") });
   await assert.rejects(provider.apply(deployment(), version({ "server.js": SERVER_JS })));
   assert.deepEqual(fake.names(), []);
 });
