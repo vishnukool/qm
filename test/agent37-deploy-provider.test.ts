@@ -18,7 +18,7 @@ const scope = scopeId("personal", "tester");
 const SERVER_JS = `require('http').createServer((_q, r) => r.end(process.env.API_TOKEN ?? 'ok')).listen(Number(process.env.PORT));\n`;
 
 let fake: FakeAgent37;
-let roots: string[] = [];
+const roots: string[] = [];
 
 function deployment(extra: Partial<Deployment> = {}): Deployment {
   return {
