@@ -16,6 +16,7 @@ interface FakeInstance {
   template?: string;
   autoSleep?: boolean;
   resources?: Record<string, number>;
+  publicPorts?: number[];
   freezing?: number;
   home: string;
 }
@@ -31,6 +32,15 @@ export interface FakeInstanceView {
   template?: string;
   autoSleep?: boolean;
   resources?: Record<string, number>;
+  publicPorts?: number[];
+}
+
+export interface FakeTemplate {
+  name: string;
+  image_ref?: string;
+  default_port?: number;
+  entrypoint?: string[];
+  revision?: number;
 }
 
 export interface FakeAgent37 {
@@ -43,6 +53,7 @@ export interface FakeAgent37 {
   fail(name: string): void;
   failNext(status: number, opts?: InjectedFailure): void;
   execScripts(): string[];
+  templates(): FakeTemplate[];
   cleanup(): void;
 }
 
@@ -52,6 +63,7 @@ const OUTPUT_CAP = 512 * 1024;
 export function installFakeAgent37(): FakeAgent37 {
   const root = mkdtempSync(join(tmpdir(), "fake-a37-"));
   const instances = new Map<string, FakeInstance>();
+  const templates = new Map<string, FakeTemplate>();
   const execScripts: string[] = [];
   const calls: Agent37Call[] = [];
   let nextId = 1;
@@ -65,6 +77,7 @@ export function installFakeAgent37(): FakeAgent37 {
     template?: string;
     auto_sleep?: boolean;
     resources?: Record<string, number>;
+    public_ports?: Array<{ port: number }>;
   }): FakeInstance => {
     const id = `inst${nextId++}`;
     const m: FakeInstance = {
@@ -74,6 +87,7 @@ export function installFakeAgent37(): FakeAgent37 {
       ...(body.template ? { template: body.template } : {}),
       ...(body.auto_sleep !== undefined ? { autoSleep: body.auto_sleep } : {}),
       ...(body.resources ? { resources: body.resources } : {}),
+      ...(body.public_ports?.length ? { publicPorts: body.public_ports.map((p) => p.port) } : {}),
       home: join(root, id),
     };
     mkdirSync(m.home, { recursive: true });
@@ -94,6 +108,8 @@ export function installFakeAgent37(): FakeAgent37 {
       script
         .replace(/\btimeout (?:-k \d+ )?\d+ /g, "")
         .replace(/\/home\/node/g, m.home)
+        // Guest paths the deploy provider owns; rooted in the instance home like the rest.
+        .replace(/\/(app|data)(?![A-Za-z0-9._-])/g, `${m.home}/$1`)
         .replace(remapPath, (mm) => (mm.startsWith(m.home) ? mm : `${m.home}/tmp/`))
     );
   };
@@ -124,6 +140,8 @@ export function installFakeAgent37(): FakeAgent37 {
     resources: m.resources ?? {},
     name: m.name,
     auto_sleep: m.autoSleep === true,
+    url: `https://${m.id}.agent37.app`,
+    public_ports: (m.publicPorts ?? []).map((port) => ({ port, url: `https://pp-${m.id}-${port}.agent37.app` })),
   });
 
   const error = (status: number, code: string, message: string): Response =>
@@ -146,6 +164,17 @@ export function installFakeAgent37(): FakeAgent37 {
         status: next!.status,
         headers: next!.headers ?? {},
       });
+    }
+    const tpl = /^\/v1\/templates\/([^/]+)$/.exec(url.pathname);
+    if (tpl) {
+      const found = templates.get(decodeURIComponent(tpl[1]!));
+      return found ? Response.json(found) : error(404, "not_found", "Template not found.");
+    }
+    if (url.pathname === "/v1/templates" && method === "POST") {
+      const body = JSON.parse(toBuf(init?.body).toString() || "{}") as FakeTemplate;
+      if (templates.has(body.name)) return error(409, "template_conflict", "Template already exists.");
+      templates.set(body.name, { ...body, revision: 1 });
+      return Response.json(templates.get(body.name), { status: 201 });
     }
     if (url.pathname === "/v1/instances" && method === "GET") {
       return Response.json({ data: live().map(info) });
@@ -194,6 +223,11 @@ export function installFakeAgent37(): FakeAgent37 {
         m.status = "stopping";
         return Response.json({ id: m.id, status: "stopping" });
       }
+      if (method === "PATCH") {
+        const body = JSON.parse(toBuf(init?.body).toString() || "{}") as { auto_sleep?: boolean };
+        if (body.auto_sleep !== undefined) m.autoSleep = body.auto_sleep;
+        return Response.json(info(m));
+      }
       if (method === "GET") {
         const body = info(settle(m));
         if (m.status === "stopping") m.status = "stopped";
@@ -220,6 +254,7 @@ export function installFakeAgent37(): FakeAgent37 {
             ...(m.template ? { template: m.template } : {}),
             ...(m.autoSleep !== undefined ? { autoSleep: m.autoSleep } : {}),
             ...(m.resources ? { resources: m.resources } : {}),
+            ...(m.publicPorts ? { publicPorts: m.publicPorts } : {}),
           }
         : null;
     },
@@ -242,6 +277,7 @@ export function installFakeAgent37(): FakeAgent37 {
       injected.push({ status, ...opts });
     },
     execScripts: () => [...execScripts],
+    templates: () => [...templates.values()],
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
 }
