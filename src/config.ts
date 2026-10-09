@@ -658,8 +658,6 @@ function agent37SandboxEnv(env: NodeJS.ProcessEnv): Agent37SandboxEnv {
   };
 }
 
-// Published apps on Agent37. Separate from the sandbox block on purpose: a deployment may run
-// its agent computers on one backend and its apps on another, and either half may be absent.
 interface Agent37DeployEnv {
   apiKey?: string;
   baseUrl?: string;
@@ -676,17 +674,16 @@ interface Agent37DeployEnv {
 function agent37DeployEnv(env: NodeJS.ProcessEnv): Agent37DeployEnv {
   const num = (name: string, raw: string | undefined) => numEnvStrict(name, raw);
   return {
-    // The sandbox key is the fallback: one Agent37 workspace is the common case.
-    ...(env.AGENT37_DEPLOY_API_KEY || env.AGENT37_API_KEY
-      ? { apiKey: env.AGENT37_DEPLOY_API_KEY ?? env.AGENT37_API_KEY }
+    ...(env.AGENT37_DEPLOY_API_KEY?.trim() || env.AGENT37_API_KEY?.trim()
+      ? { apiKey: env.AGENT37_DEPLOY_API_KEY?.trim() || env.AGENT37_API_KEY?.trim() }
       : {}),
-    ...(env.AGENT37_DEPLOY_API_BASE_URL || env.AGENT37_API_BASE_URL
-      ? { baseUrl: env.AGENT37_DEPLOY_API_BASE_URL ?? env.AGENT37_API_BASE_URL }
+    ...(env.AGENT37_DEPLOY_API_BASE_URL?.trim() || env.AGENT37_API_BASE_URL?.trim()
+      ? { baseUrl: env.AGENT37_DEPLOY_API_BASE_URL?.trim() || env.AGENT37_API_BASE_URL?.trim() }
       : {}),
     ...(env.AGENT37_DEPLOY_TEMPLATE ? { template: env.AGENT37_DEPLOY_TEMPLATE } : {}),
     ...(env.AGENT37_DEPLOY_RUNNER_IMAGE ? { runnerImage: env.AGENT37_DEPLOY_RUNNER_IMAGE } : {}),
-    ...(env.AGENT37_DEPLOY_NAME_PREFIX || env.AGENT37_NAME_PREFIX
-      ? { namePrefix: env.AGENT37_DEPLOY_NAME_PREFIX ?? env.AGENT37_NAME_PREFIX }
+    ...(env.AGENT37_DEPLOY_NAME_PREFIX?.trim() || env.AGENT37_NAME_PREFIX?.trim()
+      ? { namePrefix: env.AGENT37_DEPLOY_NAME_PREFIX?.trim() || env.AGENT37_NAME_PREFIX?.trim() }
       : {}),
     ...(num("AGENT37_DEPLOY_CPUS", env.AGENT37_DEPLOY_CPUS) !== undefined
       ? { cpus: num("AGENT37_DEPLOY_CPUS", env.AGENT37_DEPLOY_CPUS) }
@@ -700,8 +697,6 @@ function agent37DeployEnv(env: NodeJS.ProcessEnv): Agent37DeployEnv {
     ...(num("AGENT37_DEPLOY_APP_PORT", env.AGENT37_DEPLOY_APP_PORT) !== undefined
       ? { appPort: num("AGENT37_DEPLOY_APP_PORT", env.AGENT37_DEPLOY_APP_PORT) }
       : {}),
-    // Apps sleep when idle and wake on the next request, which is what makes an idle app cost
-    // its disk alone. AGENT37_DEPLOY_ALWAYS_ON=1 keeps every app awake instead.
     ...(env.AGENT37_DEPLOY_ALWAYS_ON === "1" || env.AGENT37_DEPLOY_ALWAYS_ON === "true" ? { autoSleep: false } : {}),
   };
 }

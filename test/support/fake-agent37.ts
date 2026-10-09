@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +17,8 @@ interface FakeInstance {
   autoSleep?: boolean;
   resources?: Record<string, number>;
   publicPorts?: number[];
+  metadata?: Record<string, unknown>;
+  process?: ChildProcess;
   freezing?: number;
   home: string;
 }
@@ -38,7 +40,7 @@ export interface FakeInstanceView {
 export interface FakeTemplate {
   name: string;
   image_ref?: string;
-  default_port?: number;
+  default_port?: number | null;
   entrypoint?: string[];
   revision?: number;
 }
@@ -78,6 +80,7 @@ export function installFakeAgent37(): FakeAgent37 {
     auto_sleep?: boolean;
     resources?: Record<string, number>;
     public_ports?: Array<{ port: number }>;
+    metadata?: Record<string, unknown>;
   }): FakeInstance => {
     const id = `inst${nextId++}`;
     const m: FakeInstance = {
@@ -88,6 +91,7 @@ export function installFakeAgent37(): FakeAgent37 {
       ...(body.auto_sleep !== undefined ? { autoSleep: body.auto_sleep } : {}),
       ...(body.resources ? { resources: body.resources } : {}),
       ...(body.public_ports?.length ? { publicPorts: body.public_ports.map((p) => p.port) } : {}),
+      ...(body.metadata ? { metadata: body.metadata } : {}),
       home: join(root, id),
     };
     mkdirSync(m.home, { recursive: true });
@@ -108,7 +112,6 @@ export function installFakeAgent37(): FakeAgent37 {
       script
         .replace(/\btimeout (?:-k \d+ )?\d+ /g, "")
         .replace(/\/home\/node/g, m.home)
-        // Guest paths the deploy provider owns; rooted in the instance home like the rest.
         .replace(/\/(app|data)(?![A-Za-z0-9._-])/g, `${m.home}/$1`)
         .replace(remapPath, (mm) => (mm.startsWith(m.home) ? mm : `${m.home}/tmp/`))
     );
@@ -133,6 +136,26 @@ export function installFakeAgent37(): FakeAgent37 {
     });
   };
 
+  const boot = (m: FakeInstance) => {
+    const entrypoint = templates.get(m.template ?? "")?.entrypoint;
+    if (!entrypoint) return;
+    mkdirSync(join(m.home, "tmp"), { recursive: true });
+    m.process = spawn(entrypoint[0]!, [...entrypoint.slice(1, -1), remap(m, entrypoint.at(-1)!)], {
+      detached: true,
+      stdio: "ignore",
+      env: process.env,
+    });
+  };
+
+  const stopProcess = async (m: FakeInstance) => {
+    const child = m.process;
+    if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+    const stopped = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    process.kill(-child.pid, "SIGKILL");
+    await stopped;
+    delete m.process;
+  };
+
   const info = (m: FakeInstance) => ({
     id: m.id,
     status: m.status,
@@ -140,6 +163,7 @@ export function installFakeAgent37(): FakeAgent37 {
     resources: m.resources ?? {},
     name: m.name,
     auto_sleep: m.autoSleep === true,
+    metadata: m.metadata ?? {},
     url: `https://${m.id}.agent37.app`,
     public_ports: (m.publicPorts ?? []).map((port) => ({ port, url: `https://pp-${m.id}-${port}.agent37.app` })),
   });
@@ -181,9 +205,11 @@ export function installFakeAgent37(): FakeAgent37 {
     }
     if (url.pathname === "/v1/instances" && method === "POST") {
       const body = JSON.parse(toBuf(init?.body).toString() || "{}");
-      return Response.json(info(create(body)), { status: 201 });
+      const m = create(body);
+      boot(m);
+      return Response.json(info(m), { status: 201 });
     }
-    const sub = /^\/v1\/instances\/([^/]+)(?:\/(exec|start|stop))?$/.exec(url.pathname);
+    const sub = /^\/v1\/instances\/([^/]+)(?:\/(exec|start|stop|restart))?$/.exec(url.pathname);
     if (sub) {
       const m = instances.get(decodeURIComponent(sub[1]!));
       if (!m || m.status === "deleted") return error(404, "not_found", "Instance not found.");
@@ -220,8 +246,15 @@ export function installFakeAgent37(): FakeAgent37 {
         return Response.json({ id: m.id, status: m.status });
       }
       if (sub[2] === "stop") {
+        await stopProcess(m);
         m.status = "stopping";
         return Response.json({ id: m.id, status: "stopping" });
+      }
+      if (sub[2] === "restart") {
+        await stopProcess(m);
+        boot(m);
+        m.status = "starting";
+        return Response.json({ id: m.id, status: m.status });
       }
       if (method === "PATCH") {
         const body = JSON.parse(toBuf(init?.body).toString() || "{}") as { auto_sleep?: boolean };
@@ -234,6 +267,7 @@ export function installFakeAgent37(): FakeAgent37 {
         return Response.json(body);
       }
       if (method === "DELETE") {
+        await stopProcess(m);
         rmSync(m.home, { recursive: true, force: true });
         m.status = "deleted";
         return Response.json({ id: m.id, deleted: true });
@@ -278,6 +312,12 @@ export function installFakeAgent37(): FakeAgent37 {
     },
     execScripts: () => [...execScripts],
     templates: () => [...templates.values()],
-    cleanup: () => rmSync(root, { recursive: true, force: true }),
+    cleanup: () => {
+      for (const instance of instances.values()) {
+        const child = instance.process;
+        if (child?.pid && child.exitCode === null && child.signalCode === null) process.kill(-child.pid, "SIGKILL");
+      }
+      rmSync(root, { recursive: true, force: true });
+    },
   };
 }

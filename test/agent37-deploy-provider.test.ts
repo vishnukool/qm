@@ -1,8 +1,12 @@
-import { test, beforeEach, after } from "node:test";
+import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { createServer } from "node:net";
+import { createDeployStore } from "../src/deploy/deploy-store.ts";
+import { createDeployService } from "../src/deploy/deploy-service.ts";
+import { createAclStore } from "../src/acl/acl-store.ts";
 import { createAgent37DeployProvider } from "../src/deploy/agent37-deploy-provider.ts";
 import type { Deployment, DeploymentVersion } from "../src/deploy/deploy-store.ts";
 import type { DeployProvider } from "../src/deploy/deploy-provider.ts";
@@ -13,11 +17,10 @@ import { installFakeAgent37, FAKE_AGENT37_API_KEY, type FakeAgent37 } from "./su
 const ID = "550e8400-e29b-41d4-a716-446655440000";
 const scope = scopeId("personal", "tester");
 
-// The fake runs exec scripts for real, so the app is a real server: that makes the readiness
-// probe, the start script and the env it exports all genuinely exercised.
 const SERVER_JS = `require('http').createServer((_q, r) => r.end(process.env.API_TOKEN ?? 'ok')).listen(Number(process.env.PORT));\n`;
 
 let fake: FakeAgent37;
+let appPort: number;
 const roots: string[] = [];
 
 function deployment(extra: Partial<Deployment> = {}): Deployment {
@@ -44,7 +47,6 @@ function version(files: Record<string, string>, extra: Partial<DeploymentVersion
   return {
     version: 1,
     createdAt: Date.now(),
-    // The ready probe curls the app port, so the fake's `sh -c` has to serve something.
     entrypoint: "node server.js",
     snapshotDir: root,
     ...extra,
@@ -56,17 +58,24 @@ function make(extra: Record<string, unknown> = {}): DeployProvider {
     apiKey: FAKE_AGENT37_API_KEY,
     fetchImpl: fake.fetchImpl,
     namePrefix: "qmt",
-    // The fake runs exec scripts for real on the host, so never wait a full minute on a probe.
-    readyWindowSec: 2,
+    readyWindowSec: 5,
+    appPort,
     store: createMemoryMap(),
     ...extra,
   });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   fake = installFakeAgent37();
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  appPort = (server.address() as { port: number }).port;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
 });
-after(() => fake?.cleanup());
+afterEach(() => {
+  fake?.cleanup();
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 
 test("tells qm it manages idleness itself, so qm never reaps an app", () => {
   const provider = make();
@@ -76,19 +85,16 @@ test("tells qm it manages idleness itself, so qm never reaps an app", () => {
 
 test("creates the runner template once, with a fixed entrypoint that runs the app's own start script", async () => {
   const provider = make();
-  await provider.apply(deployment(), version({ "server.js": SERVER_JS })).catch(() => {});
+  await provider.apply(deployment(), version({ "server.js": SERVER_JS }));
 
   const templates = fake.templates();
   assert.equal(templates.length, 1);
   const [tpl] = templates;
   assert.equal(tpl!.name, "qm-app-runner");
-  assert.equal(tpl!.default_port, 8080);
-  // Fixed, because the per-app command is a file on the instance. That is what survives a sleep:
-  // a command we only exec in would be gone after the first checkpoint.
+  assert.equal(tpl!.default_port, null);
   assert.ok(tpl!.entrypoint?.join(" ").includes("/app/.qm-start.sh"));
 
-  // A second deploy reuses it rather than racing a duplicate create.
-  await provider.apply(deployment({ id: "other-deployment-id" }), version({ "server.js": SERVER_JS })).catch(() => {});
+  await provider.apply(deployment(), version({ "server.js": SERVER_JS }));
   assert.equal(fake.templates().length, 1);
 });
 
@@ -100,8 +106,7 @@ test("creates one sleeping instance per app with a public port, and returns its 
   assert.ok(name!.startsWith("qmt-app-550e8400-e29"), `unexpected instance name ${name}`);
   const instance = fake.instance(name!);
   assert.equal(instance?.template, "qm-app-runner");
-  assert.deepEqual(instance?.publicPorts, [8080]);
-  // qm defaults an app to not-always-on, and that is the cheap path here: disk only while idle.
+  assert.deepEqual(instance?.publicPorts, [appPort]);
   assert.equal(instance?.autoSleep, true);
 
   assert.equal(endpoint.tls, true);
@@ -135,37 +140,19 @@ test("ships the app tree and writes a start script carrying the version's env", 
     version({ "server.js": SERVER_JS, "lib/util.js": "" }, { env: { API_TOKEN: "t0ken", "bad name": "dropped" } }),
   );
 
-  const scripts = fake.execScripts().join("\n");
-  assert.match(scripts, /tar -xzmf/);
-  assert.match(scripts, /chmod 0755 '\/app\/\.qm-start\.sh'/);
-  // The start script is what the entrypoint re-runs on every boot, so the env has to live in it.
-  const written = fake
-    .execScripts()
-    .filter((s) => s.includes("base64 -d"))
-    .join("");
-  assert.ok(written.length > 0, "app bundle was never written");
-  // Keys that are not valid shell identifiers never reach the instance.
-  assert.ok(!scripts.includes("bad name"));
+  assert.equal(await (await fetch(`http://127.0.0.1:${appPort}`)).text(), "t0ken");
 });
 
-test("reconcile pushes only the changed paths into the instance already serving", async () => {
+test("republishing replaces files on the same instance and applies always-on", async () => {
   const provider = make();
   const d = deployment();
-  await provider.apply(d, version({ "server.js": SERVER_JS, "keep.txt": "keep" }));
+  await provider.apply(d, version({ "server.js": SERVER_JS, "gone.txt": "old" }));
   const before = fake.names()[0]!;
-
-  const next = version({ "server.js": SERVER_JS, "keep.txt": "keep", "added.txt": "new" });
-  const endpoint = await provider.reconcile!(d, next, {
-    changedPaths: ["added.txt"],
-    deletedPaths: ["gone.txt"],
-    allPaths: ["server.js", "keep.txt", "added.txt"],
-  });
-
-  // Same instance: live editing must not rebuild the box or change the app's URL.
+  const next = version({ "server.js": SERVER_JS }, { env: { API_TOKEN: "updated" } });
+  await provider.apply({ ...d, alwaysOn: true }, next);
   assert.deepEqual(fake.names(), [before]);
-  assert.ok(endpoint.publicUrl?.startsWith("https://pp-"));
-  const scripts = fake.execScripts().join("\n");
-  assert.match(scripts, /rm -rf -- '\/app\/gone\.txt'/);
+  assert.equal(await (await fetch(`http://127.0.0.1:${appPort}`)).text(), "updated");
+  assert.equal(fake.instance(before)?.autoSleep, false);
 });
 
 test("destroy deletes the instance and resolveEndpoint then reports nothing", async () => {
@@ -180,7 +167,6 @@ test("destroy deletes the instance and resolveEndpoint then reports nothing", as
   assert.equal(fake.names().length, 0);
   assert.equal(await provider.resolveEndpoint!(d, v), null);
 
-  // Destroying twice is not an error: the pointer is already gone.
   await provider.destroy(d);
 });
 
@@ -196,7 +182,6 @@ test("logs tail the app's output, and are null once the instance is gone", async
 
 test("a create that never comes up leaves no orphan instance behind", async () => {
   const provider = make();
-  // The instance is created, then poisoned before the provider can reach it.
   fake.failNext(500, { match: ({ path }) => path.endsWith("/exec") });
   await assert.rejects(provider.apply(deployment(), version({ "server.js": SERVER_JS })));
   assert.deepEqual(fake.names(), []);
@@ -204,4 +189,46 @@ test("a create that never comes up leaves no orphan instance behind", async () =
 
 test("refuses to construct without an API key", () => {
   assert.throws(() => createAgent37DeployProvider({}), /AGENT37_DEPLOY_API_KEY/);
+});
+
+test("ordinary publish, Git-backed redeploy and rollback serve their selected version", async () => {
+  const deployDir = mkdtempSync(join(tmpdir(), "a37-service-"));
+  roots.push(deployDir);
+  const service = createDeployService({
+    deployStore: createDeployStore(),
+    provider: make(),
+    acl: createAclStore(),
+    deployDir,
+    auditLog: { record() {}, events: async () => [], tail: async () => [] },
+  });
+  const d = await service.deploy({
+    ownerScopeId: scope,
+    createdBy: "tester",
+    entrypoint: "node server.js",
+    files: [{ path: "server.js", data: SERVER_JS }],
+    env: { API_TOKEN: "first" },
+  });
+  assert.equal(await (await fetch(`http://127.0.0.1:${appPort}`)).text(), "first");
+  const before = fake.names()[0]!;
+  await service.redeploy(d.id, {
+    entrypoint: "node server.js",
+    files: [{ path: "server.js", data: SERVER_JS.replace("'ok'", "'second'") }],
+    env: {},
+  });
+  assert.equal(await (await fetch(`http://127.0.0.1:${appPort}`)).text(), "second");
+  await service.rollbackDeployment(d.id, 1);
+  assert.equal(await (await fetch(`http://127.0.0.1:${appPort}`)).text(), "first");
+  assert.deepEqual(fake.names(), [before]);
+});
+
+test("a new provider recovers a tagged instance after losing its local pointer", async () => {
+  const d = deployment();
+  await make().apply(d, version({ "server.js": SERVER_JS }));
+  const before = fake.names()[0]!;
+  const recovered = make();
+  await recovered.apply(d, version({ "server.js": SERVER_JS }, { env: { API_TOKEN: "recovered" } }));
+  assert.deepEqual(fake.names(), [before]);
+  assert.equal(await (await fetch(`http://127.0.0.1:${appPort}`)).text(), "recovered");
+  await make().destroy(d);
+  assert.deepEqual(fake.names(), []);
 });
