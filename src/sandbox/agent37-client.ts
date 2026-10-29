@@ -4,6 +4,7 @@ import { swallowAs, withRequestId } from "../util/errors.ts";
 import { shq } from "../util/shell.ts";
 
 const DEFAULT_BASE_URL = "https://api.agent37.com";
+const DEFAULT_EXEC_BASE_URL = "https://sandbox.agent37.app";
 const WRITE_CHUNK_B64 = 64 * 1024;
 const START_TIMEOUT_MS = 830_000;
 const READY_TIMEOUT_MS = 300_000;
@@ -22,6 +23,7 @@ export interface Agent37ExecResponse {
 interface Agent37ClientOptions {
   apiKey?: string;
   baseUrl?: string;
+  execBaseUrl?: string;
   fetchImpl?: typeof fetch;
   errorPrefix?: string;
   refusalError?: (body: string) => Error | null;
@@ -30,6 +32,7 @@ interface Agent37ClientOptions {
 export function createAgent37Client(opts: Agent37ClientOptions) {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const execBaseUrl = (opts.execBaseUrl ?? DEFAULT_EXEC_BASE_URL).replace(/\/+$/, "");
   const errorPrefix = opts.errorPrefix ?? "agent37";
 
   function send(
@@ -47,6 +50,16 @@ export function createAgent37Client(opts: Agent37ClientOptions) {
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       signal: signal ?? AbortSignal.timeout(timeoutMs),
+    });
+  }
+
+  // The instance's own host answers exec, keyed by X-Agent37-Key; the api.agent37.com form relays here.
+  function sendExec(id: string, command: string, timeoutMs: number): Promise<Response> {
+    return fetchImpl(`${execBaseUrl}/v1/instances/${encodeURIComponent(id)}/exec`, {
+      method: "POST",
+      headers: { "x-agent37-key": opts.apiKey ?? "", "content-type": "application/json" },
+      body: JSON.stringify({ command }),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   }
 
@@ -105,7 +118,7 @@ export function createAgent37Client(opts: Agent37ClientOptions) {
     }
   }
 
-  return { send, api, apiJson, apiFailure, fail, readExecResponse, ensureRunning };
+  return { send, sendExec, api, apiJson, apiFailure, fail, readExecResponse, ensureRunning };
 }
 
 export function createAgent37FileWriter(

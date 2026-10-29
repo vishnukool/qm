@@ -59,6 +59,7 @@ export interface StoredAgent37DeployBody {
 export interface Agent37DeployProviderOptions {
   apiKey?: string;
   baseUrl?: string;
+  execBaseUrl?: string;
   template?: string;
   runnerImage?: string;
   namePrefix?: string;
@@ -97,7 +98,7 @@ export function createAgent37DeployProvider(opts: Agent37DeployProviderOptions):
   });
   let templateReady = false;
 
-  const { send, api, apiJson, fail, readExecResponse, ensureRunning } = createAgent37Client({
+  const { send, sendExec, api, apiJson, fail, readExecResponse, ensureRunning } = createAgent37Client({
     ...opts,
     errorPrefix: "agent37 deploy",
   });
@@ -134,12 +135,7 @@ export function createAgent37DeployProvider(opts: Agent37DeployProviderOptions):
   }
 
   async function exec(instanceId: string, script: string, timeoutSec: number): Promise<Agent37ExecResponse> {
-    const res = await send(
-      "POST",
-      `/v1/instances/${encodeURIComponent(instanceId)}/exec`,
-      { command: script },
-      Math.min(EXEC_TIMEOUT_MS, timeoutSec * 1000 + 60_000),
-    );
+    const res = await sendExec(instanceId, script, Math.min(EXEC_TIMEOUT_MS, timeoutSec * 1000 + 60_000));
     return readExecResponse(instanceId, res);
   }
 

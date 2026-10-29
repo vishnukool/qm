@@ -25,6 +25,7 @@ test("Agent37 deployment overrides use shared values when blank", () => {
   const shared = {
     AGENT37_API_KEY: "shared",
     AGENT37_API_BASE_URL: "https://example.com",
+    AGENT37_EXEC_BASE_URL: "https://sandbox.example.com",
     AGENT37_NAME_PREFIX: "shared",
   };
   for (const empty of ["", "  "]) {
@@ -33,10 +34,12 @@ test("Agent37 deployment overrides use shared values when blank", () => {
       DEPLOY_PROVIDER: "agent37",
       AGENT37_DEPLOY_API_KEY: empty,
       AGENT37_DEPLOY_API_BASE_URL: empty,
+      AGENT37_DEPLOY_EXEC_BASE_URL: empty,
       AGENT37_DEPLOY_NAME_PREFIX: empty,
     });
     assert.equal(config.agent37Deploy.apiKey, "shared");
     assert.equal(config.agent37Deploy.baseUrl, "https://example.com");
+    assert.equal(config.agent37Deploy.execBaseUrl, "https://sandbox.example.com");
     assert.equal(config.agent37Deploy.namePrefix, "shared");
   }
   assert.equal(loadConfig({ ...shared, AGENT37_DEPLOY_API_KEY: "deploy" }).agent37Deploy.apiKey, "deploy");

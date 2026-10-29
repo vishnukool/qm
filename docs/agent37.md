@@ -16,21 +16,22 @@ instance, preserving its URL and `/data` directory.
 
 ## Settings
 
-| Setting                       | Default                                                | Purpose                                                                          |
-| ----------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------- |
-| `AGENT37_DEPLOY_API_KEY`      | `AGENT37_API_KEY`                                      | Use a separate workspace for apps.                                               |
-| `AGENT37_DEPLOY_API_BASE_URL` | `AGENT37_API_BASE_URL`, then `https://api.agent37.com` | API address.                                                                     |
-| `AGENT37_DEPLOY_NAME_PREFIX`  | `AGENT37_NAME_PREFIX`, then `qm`                       | Instance name prefix.                                                            |
-| `AGENT37_DEPLOY_TEMPLATE`     | `qm-app-runner`                                        | Workspace template, created if absent.                                           |
-| `AGENT37_DEPLOY_RUNNER_IMAGE` | `node:24-bookworm-slim`                                | Image used when creating the template. Must include Node.js, sh, tar and base64. |
-| `AGENT37_DEPLOY_CPUS`         | `2`                                                    | vCPU count.                                                                      |
-| `AGENT37_DEPLOY_MEMORY_GB`    | `4`                                                    | RAM in GB.                                                                       |
-| `AGENT37_DEPLOY_DISK_GB`      | `4`                                                    | Disk in GB.                                                                      |
-| `AGENT37_DEPLOY_APP_PORT`     | `3000`                                                 | App listener, exported as `PORT`. Choose an unreserved port.                     |
-| `AGENT37_DEPLOY_ALWAYS_ON`    | Off                                                    | Set to `1` or `true` to keep every app awake.                                    |
+| Setting                        | Default                                                     | Purpose                                                                          |
+| ------------------------------ | ----------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `AGENT37_DEPLOY_API_KEY`       | `AGENT37_API_KEY`                                           | Use a separate workspace for apps.                                               |
+| `AGENT37_DEPLOY_API_BASE_URL`  | `AGENT37_API_BASE_URL`, then `https://api.agent37.com`      | API address.                                                                     |
+| `AGENT37_DEPLOY_EXEC_BASE_URL` | `AGENT37_EXEC_BASE_URL`, then `https://sandbox.agent37.app` | Address for running commands in an instance.                                     |
+| `AGENT37_DEPLOY_NAME_PREFIX`   | `AGENT37_NAME_PREFIX`, then `qm`                            | Instance name prefix.                                                            |
+| `AGENT37_DEPLOY_TEMPLATE`      | `qm-app-runner`                                             | Workspace template, created if absent.                                           |
+| `AGENT37_DEPLOY_RUNNER_IMAGE`  | `node:24-bookworm-slim`                                     | Image used when creating the template. Must include Node.js, sh, tar and base64. |
+| `AGENT37_DEPLOY_CPUS`          | `2`                                                         | vCPU count.                                                                      |
+| `AGENT37_DEPLOY_MEMORY_GB`     | `4`                                                         | RAM in GB.                                                                       |
+| `AGENT37_DEPLOY_DISK_GB`       | `4`                                                         | Disk in GB.                                                                      |
+| `AGENT37_DEPLOY_APP_PORT`      | `3000`                                                      | App listener, exported as `PORT`. Choose an unreserved port.                     |
+| `AGENT37_DEPLOY_ALWAYS_ON`     | Off                                                         | Set to `1` or `true` to keep every app awake.                                    |
 
 CPU and RAM must match an Agent37 shape: 2/4, 4/8, 8/16 or 16/32.
-Blank key, API address and name-prefix overrides use the shared setting.
+Blank key, API address, command address and name-prefix overrides use the shared setting.
 Every app counts against the workspace's instance limit and is billed to that workspace.
 
 ## App startup

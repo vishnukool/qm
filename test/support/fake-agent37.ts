@@ -181,6 +181,12 @@ export function installFakeAgent37(): FakeAgent37 {
     const url = new URL(typeof input === "string" ? input : input.toString());
     const method = init?.method ?? "GET";
     calls.push({ method, path: url.pathname });
+    const headers = new Headers(init?.headers);
+    const routed = url.pathname.endsWith("/exec")
+      ? url.host === "sandbox.agent37.app" && headers.has("x-agent37-key") && !headers.has("authorization")
+      : url.host === "api.agent37.com" && !headers.has("x-agent37-key");
+    if (!routed)
+      return error(401, "invalid_api_key", `${method} ${url.host}${url.pathname}: wrong host or key header.`);
     const at = injected.findIndex((f) => !f.match || f.match({ method, path: url.pathname }));
     if (at >= 0) {
       const [next] = injected.splice(at, 1);

@@ -365,4 +365,13 @@ test("a refusal on exec parks the turn instead of failing it generically", async
     assert.match(e.message, /suspended for non-payment/);
     return true;
   });
+  fake.failNext(402, {
+    body: JSON.stringify({ error: "instance_suspended", message: "This instance is suspended for non-payment." }),
+    match: (c) => c.path.endsWith("/exec"),
+  });
+  await assert.rejects(sandbox.run(h, "echo hi"), (e: Error) => {
+    assert.ok(e instanceof NonRetryableTurnError);
+    assert.match(e.message, /suspended for non-payment/);
+    return true;
+  });
 });

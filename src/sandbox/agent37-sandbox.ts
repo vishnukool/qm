@@ -59,19 +59,22 @@ const REFUSAL_CODES = new Set([
   "free_hours_exhausted",
   "subscription_required",
   "tier_limit",
+  "instance_suspended",
   "invalid_api_key",
   "ip_not_allowed",
   "forbidden",
 ]);
 
 function refusalMessage(body: string): string | null {
-  let parsed: { error?: { code?: string; message?: string } };
+  let parsed: { error?: string | { code?: string; message?: string }; message?: string };
   try {
     parsed = JSON.parse(body);
   } catch {
     return null;
   }
-  const { code, message } = parsed?.error ?? {};
+  // The sandbox host's edge answers auth and suspension flat: { error: code, message }.
+  const { code, message } =
+    typeof parsed?.error === "string" ? { code: parsed.error, message: parsed.message } : (parsed?.error ?? {});
   return code && message && REFUSAL_CODES.has(code) ? message : null;
 }
 
@@ -84,6 +87,7 @@ interface InstanceInfo {
 export interface Agent37SandboxOptions {
   apiKey?: string;
   baseUrl?: string;
+  execBaseUrl?: string;
   namePrefix?: string;
   template?: string;
   cpus?: number;
@@ -121,7 +125,7 @@ export function createAgent37Sandbox(workspace: WorkspaceStore, opts: Agent37San
   const scratchKeyByName = new Map<string, string>();
   const activeScratch = new Map<string, number>();
 
-  const { send, api, apiJson, apiFailure, readExecResponse, ensureRunning } = createAgent37Client({
+  const { send, sendExec, api, apiJson, apiFailure, readExecResponse, ensureRunning } = createAgent37Client({
     ...opts,
     refusalError(body) {
       const refused = refusalMessage(body);
@@ -172,9 +176,8 @@ export function createAgent37Sandbox(workspace: WorkspaceStore, opts: Agent37San
 
   async function postExec(name: string, script: string, timeoutSec: number): Promise<Agent37ExecResponse> {
     const id = await instanceIdFor(name);
-    const body = { command: script };
     const timeoutMs = timeoutSec * 1000 + 2 * EXIT_GRACE_MS;
-    const first = await send("POST", `/v1/instances/${encodeURIComponent(id)}/exec`, body, timeoutMs);
+    const first = await sendExec(id, script, timeoutMs);
     let res = first;
     if (!first.ok) {
       const { detail, error } = await apiFailure(`exec ${name}`, first);
@@ -186,7 +189,7 @@ export function createAgent37Sandbox(workspace: WorkspaceStore, opts: Agent37San
       }
       const retryId = await instanceIdFor(name);
       await ensureRunning(retryId);
-      res = await send("POST", `/v1/instances/${encodeURIComponent(retryId)}/exec`, body, timeoutMs);
+      res = await sendExec(retryId, script, timeoutMs);
     }
     return readExecResponse(name, res);
   }

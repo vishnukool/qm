@@ -627,6 +627,7 @@ function porterSandboxEnv(env: NodeJS.ProcessEnv): PorterSandboxEnv {
 interface Agent37SandboxEnv {
   apiKey?: string;
   baseUrl?: string;
+  execBaseUrl?: string;
   namePrefix?: string;
   template?: string;
   cpus?: number;
@@ -640,6 +641,7 @@ function agent37SandboxEnv(env: NodeJS.ProcessEnv): Agent37SandboxEnv {
   return {
     ...(env.AGENT37_API_KEY ? { apiKey: env.AGENT37_API_KEY } : {}),
     ...(env.AGENT37_API_BASE_URL ? { baseUrl: env.AGENT37_API_BASE_URL } : {}),
+    ...(env.AGENT37_EXEC_BASE_URL ? { execBaseUrl: env.AGENT37_EXEC_BASE_URL } : {}),
     ...(env.AGENT37_NAME_PREFIX ? { namePrefix: env.AGENT37_NAME_PREFIX } : {}),
     ...(env.AGENT37_TEMPLATE ? { template: env.AGENT37_TEMPLATE } : {}),
     ...(numEnvStrict("AGENT37_CPUS", env.AGENT37_CPUS) !== undefined
@@ -661,6 +663,7 @@ function agent37SandboxEnv(env: NodeJS.ProcessEnv): Agent37SandboxEnv {
 interface Agent37DeployEnv {
   apiKey?: string;
   baseUrl?: string;
+  execBaseUrl?: string;
   template?: string;
   runnerImage?: string;
   namePrefix?: string;
@@ -679,6 +682,9 @@ function agent37DeployEnv(env: NodeJS.ProcessEnv): Agent37DeployEnv {
       : {}),
     ...(env.AGENT37_DEPLOY_API_BASE_URL?.trim() || env.AGENT37_API_BASE_URL?.trim()
       ? { baseUrl: env.AGENT37_DEPLOY_API_BASE_URL?.trim() || env.AGENT37_API_BASE_URL?.trim() }
+      : {}),
+    ...(env.AGENT37_DEPLOY_EXEC_BASE_URL?.trim() || env.AGENT37_EXEC_BASE_URL?.trim()
+      ? { execBaseUrl: env.AGENT37_DEPLOY_EXEC_BASE_URL?.trim() || env.AGENT37_EXEC_BASE_URL?.trim() }
       : {}),
     ...(env.AGENT37_DEPLOY_TEMPLATE ? { template: env.AGENT37_DEPLOY_TEMPLATE } : {}),
     ...(env.AGENT37_DEPLOY_RUNNER_IMAGE ? { runnerImage: env.AGENT37_DEPLOY_RUNNER_IMAGE } : {}),
